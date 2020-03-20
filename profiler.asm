@@ -1,0 +1,192 @@
+	INCLUDE	"sysvars.asm"
+MAIN_4:		EQU	$1303
+MAKE_ROOM:	EQU	$1655
+NUMBER:		EQU	$18B6
+STMT_LX:	EQU	$1B32
+LOOK_PROG:	EQU	$1D86
+LOOK_P_2:	EQU	$1DA3
+STACK_NUM:	EQU	$33B4
+
+	ORG	65000
+PROFILE:LD	HL,(PROG)
+SETUP:	LD	A,(HL)
+	CP	$3E
+	JR	NC,METER
+	INC	HL
+	INC	HL		; skip line number
+	LD	E,L
+	LD	D,H		; save line length pointer
+	INC	HL
+	INC	HL		; skip line length
+INSTR:	LD	A,(HL)
+	CALL	NUMBER
+	INC	HL
+	CP	$0D		; NEWLINE
+	JR	Z,SETUP
+	CP	":"
+	JR	Z,INSTR
+	CP	$CE		; DEF FN
+	JR	C,INSTR		; next byte, if not instruction token
+	JR	Z,STMT		; no metering for DEF FN
+	CP	$E4		; DATA
+	JR	Z,STMT		; no metering for DATA
+	CP	$F3		; NEXT
+	JR	Z,STMT		; no metering for NEXT
+	LD	BC,$0008
+	PUSH	HL
+	EX	DE,HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	ADD	HL,BC
+	EX	DE,HL
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E
+	EX	DE,HL
+	POP	HL
+	DEC	HL
+	PUSH	DE
+	CALL	MAKE_ROOM
+	POP	DE
+	INC	HL
+	LD	(HL),"!"
+	INC	HL
+	LD	(HL),"!"
+	INC	HL
+	LD	(HL),$0E
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),B
+	INC	HL
+STMT:	LD	A,(HL)
+	CALL	NUMBER
+	INC	HL
+	CP	"\""
+	JR	Z,QUOT
+	CP	$0D
+	JR	Z,SETUP
+	CP	$CB		; THEN
+	JR	Z,INSTR
+	CP	":"
+	JR	NZ,STMT
+	JR	INSTR
+QUOT:	LD	A,(HL)
+	INC	HL
+	CP	"\""
+	JR	NZ,QUOT
+	JR	STMT
+METER:	LD	HL,(ERR_SP)
+	LD	(HL),ERRHND-$100*(ERRHND/$100)
+	INC	HL
+	LD	(HL),ERRHND/$100
+	RET
+
+ERRHND:	LD	A,(ERR_NR)
+	CP	$0C - 1
+	JR	NZ,ERROR
+	LD	HL,ERRHND
+	PUSH	HL
+	RST	$18
+	CP	"!"
+	JR	NZ,ERROR2
+	LD	(IY+$00),$FF
+	INC	HL
+	INC	HL			; TODO: error handling
+	PUSH	HL
+	CALL	STACK_NUM
+	LD	(CH_ADD),HL
+	RST	$28
+	DEFB	$A1,$0F,$02,$38		; stkone,add,del,end
+	LD	HL,(STKEND)
+	POP	DE
+	LD	BC,5
+	LDIR
+	JP	STMT_LX
+
+ERROR2:	POP	HL
+ERROR:	RST	$28
+	DEFB	$A0,$C0,$02,$38		; stkzero,stmem0,del,end
+	LD	HL,FINDMAX
+	LD	(CNTDO),HL
+	CALL	SCANCNT
+	LD	HL,PAINT
+	LD	(CNTDO),HL
+	CALL	SCANCNT
+	JP	MAIN_4
+
+SCANCNT:LD	HL,(PROG)
+	DEC	HL
+	LD	E,"!"
+	CALL	LOOK_PROG
+NEXTCNT:RET	C
+	INC	HL
+	INC	HL
+	INC	HL			; TODO: error handling
+	CALL	STACK_NUM
+	PUSH	HL
+	RST	$28
+	DEFB	$31,$E0,$03,$38		; dup,getmem0,sub,end
+CNTDO:	EQU	$ + 1
+	CALL	FINDMAX
+	POP	HL
+	LD	DE,"!"
+	CALL	LOOK_P_2
+	JR	NEXTCNT
+
+FINDMAX:RST	$28
+	DEFB	$36,$00			; less0,jumptrue
+	DEFB	NOMAX - $
+	DEFB	$C0			; stmem0
+NOMAX:	DEFB	$02,$38			; del,end
+	RET
+
+PAINT:	RST	$28
+	DEFB	$00			; jumptrue
+	DEFB	NOTHOT - $
+	DEFB	$02,$38			; end
+HOT:	LD	BC,$0206		; RED
+	JR	COLORS
+NOTHOT:	DEFB	$A4,$04,$31,$37,$00	; stkten,multiply,dup,greater0,jumptrue
+	DEFB	NOTCOLD - $
+	DEFB	$02,$38			; del end
+COLD:	LD	BC,$0501		; CYAN
+	JR	COLORS
+NOTCOLD:DEFB	$E0,$03,$36,$00		; getmem0,sub,less0,jumptrue
+	DEFB	NOTWARM - $
+	DEFB	$38			; end
+WARM:	LD	BC,$0602		; YELLOW
+	JR	COLORS
+NOTWARM:DEFB	$38
+	LD	BC,$0400		; GREEN
+COLORS:	POP	DE		; return address
+	POP	HL		; end pointer
+	PUSH	HL
+	PUSH	DE
+	LD	A,(HL)		; instruction token
+	LD	(HL),8
+	DEC	HL
+	LD	(HL),$11	; PAPER
+	DEC	HL
+	LD	(HL),8
+	DEC	HL
+	LD	(HL),$10	; INK
+	DEC	HL
+	LD	(HL),A		; token
+	DEC	HL
+	LD	(HL),C
+	DEC	HL
+	LD	(HL),$10	; INK
+	DEC	HL
+	LD	(HL),B
+	DEC	HL
+	LD	(HL),$11	; PAPER
+	RET
